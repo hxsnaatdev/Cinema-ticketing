@@ -8,8 +8,8 @@ handling, multithreading, synchronization, and inter-thread communication.
 
 ## 1. Layered packages instead of one big class
 
-**Decision:** split the code into `model`, `service`, `exception`, and a
-top-level demo class.
+**Decision:** split the code into `model`, `service`, `exception`, `app`, and
+`ui`, with a top-level `Main` for the CLI demo.
 
 **Why:**
 
@@ -19,7 +19,10 @@ top-level demo class.
   `FileStorage`, and `ReceiptGenerator` can be changed without touching the
   booking rules.
 - `exception` gives the custom checked exception its own visible home.
-- `Main` is only glue for the demonstration.
+- `app` contains the GUI's sample data, kept separate from the CLI's `Main`.
+- `ui` contains Swing components and no booking rules. It calls the service
+  layer exactly as the CLI does.
+- `Main` is only glue for the CLI demonstration.
 
 **Trade-off:** more files and a little more indirection than a single-class
 solution. For a teaching project this is worth it because each responsibility
@@ -270,8 +273,8 @@ here, and correctness/readability matter more.
 
 ## 14. `BookingService` as a facade
 
-**Decision:** `Customer` calls `BookingService`, not `Show` or `FileStorage`
-directly.
+**Decision:** `Customer` and the Swing GUI call `BookingService`, not `Show` or
+`FileStorage` directly.
 
 **Why:**
 
@@ -279,8 +282,10 @@ directly.
   and receipt writing.
 - Side effects happen in one place, in a consistent order: confirm the booking
   first, then persist, then write the receipt.
-- The model stays free of file-system dependencies, so it could be reused with
-  a database or a GUI later.
+- The model stays free of file-system dependencies, and the GUI can reuse the
+  exact same booking/cancellation API as the CLI.
+- Adding the GUI required no change to `Show`, `Seat`, or the service classes;
+  only a new presentation package was added.
 
 **Trade-off:** one extra layer of indirection. It pays off because the
 persistence code is not duplicated in every caller.
@@ -337,11 +342,14 @@ documented as a limitation rather than hidden.
 
 **Trade-off:** in production this would be replaced with a logger, and the
 model should not print. For a classroom demo, the observability is the point.
+The GUI leaves the same messages on the console; it does not redirect
+`System.out` into a Swing component.
 
 ## 18. Two separate shows for the two demos
 
 **Decision:** Demo 1 uses `SHOW-RACE` with one seat; Demo 2 uses `SHOW-WAIT`
-with one premium seat. The catalogue show `SHOW-1` is only for display.
+with one premium seat. The catalogue show `SHOW-1` is only for display. The
+GUI's `DemoData` exposes the same three shows in its show selector.
 
 **Why:**
 
@@ -350,6 +358,8 @@ with one premium seat. The catalogue show `SHOW-1` is only for display.
 - Separate shows prevent the waitlist from Demo 1 and the bookings from Demo 2
   from interfering with each other's printed results.
 - The catalogue show demonstrates pricing without being mutated by the demos.
+- Keeping the same shows in the GUI makes the transition from the CLI demo to
+  the interactive demo easy to explain.
 
 **Trade-off:** a little more setup code. The isolation makes the output much
 easier to explain.
@@ -371,7 +381,8 @@ once.
 ## 20. Timing values tuned for presentation
 
 **Decision:** 2,500 ms wait for the race, 5,000 ms for Bob, a 400 ms snapshot
-in Demo 1, and a 1,000 ms pause before cancellation in Demo 2.
+in Demo 1, and a 1,000 ms pause before cancellation in Demo 2. The GUI race
+reuses the 2,500 ms timeout.
 
 **Why:**
 
@@ -380,6 +391,7 @@ in Demo 1, and a 1,000 ms pause before cancellation in Demo 2.
   cancels.
 - The values keep the whole run under roughly ten seconds, which is suitable
   for a classroom demo.
+- Reusing the same race timeout in the GUI keeps the two front ends consistent.
 
 **Trade-off:** the values are not configurable and are not production defaults.
 They are deliberately chosen for visibility.
@@ -397,27 +409,128 @@ separators, and provide both `run.sh` and `run.bat`.
 - `run.sh` works on Unix-like systems and Windows shells such as Git Bash/WSL
   and detects `java.exe`/`javac.exe`; `run.bat` covers native Command Prompt
   and PowerShell.
+- Both scripts accept `cli` (the default) or `gui`, so nobody has to remember
+  a class name or type a long `java -cp out ...` command.
 - Both scripts fail fast with a clear message if a JDK is missing.
 
 **Trade-off:** two launchers must be kept in sync. The scripts are short enough
 that this is low risk.
 
-## 22. No database, GUI, or input loop
+## 22. No database or input loop; the GUI is an additional client
 
-**Decision:** the program is a deterministic console demo with in-memory state
-and file output.
+**Decision:** keep the deterministic CLI demo and add a Swing GUI as a second
+client over the same `BookingService`. Do not add a database or a console input
+loop.
 
 **Why:**
 
-- The assignment is about OOP and concurrency, not UI or database design.
-- A fixed scripted scenario makes the race and the waitlist reproducible and
-  easy to grade.
-- File output satisfies the file-handling requirement without adding setup
-  complexity for the teacher.
+- The CLI demo makes the race and the waitlist reproducible and easy to grade.
+- The GUI makes the same behaviour interactive without duplicating the booking
+  rules: it calls `BookingService.book()` and `BookingService.cancel()` just as
+  the CLI does.
+- A fixed set of sample shows means the teacher can reproduce a scenario
+  without configuring data.
+- File output still satisfies the file-handling requirement.
 
-**Trade-off:** the program is not an interactive booking system and does not
-reload previous bookings on startup. `data/bookings.csv` is an output artifact
-for this run, not a persistent source of truth.
+**Trade-off:** there are now two front ends to maintain, and both start from
+in-memory data. `data/bookings.csv` remains an output artifact for the current
+run, not a persistent source of truth.
+
+## 23. Swing instead of JavaFX
+
+**Decision:** build the GUI with Swing (`javax.swing`) and no external
+libraries.
+
+**Why:**
+
+- Swing ships with JDK 17, so the existing `javac --release 17` command and the
+  plain launchers keep working.
+- The project needs a seat grid, a form, two tables, and dialogs. Swing covers
+  all of that without a build tool.
+- Lab machines are more likely to have a working JDK than a configured JavaFX
+  module path.
+
+**Trade-off:** Swing looks older than JavaFX and has no FXML. JavaFX would give
+better styling and scene-builder support, but it requires adding JavaFX modules
+and probably Maven/Gradle, which is disproportionate for this project.
+
+## 24. The GUI never blocks the event-dispatch thread
+
+**Decision:** all calls to `BookingService.book()` and `BookingService.cancel()`
+run on a daemon `ExecutorService`. Results are applied with
+`SwingUtilities.invokeLater()`.
+
+**Why:**
+
+- `Show.bookSeat()` can block in `wait()` when the requested seat is occupied
+  and a positive timeout is supplied.
+- Both booking and cancellation write the CSV and receipt files.
+- Calling either from the EDT would freeze the window, which looks like a bug
+  during the presentation.
+- An executor also allows the six-customer race button to submit six tasks at
+  once, while a single `SwingWorker` would be more awkward for that use case.
+
+**Trade-off:** the UI has to track in-flight operations (`manualBookingInFlight`,
+`cancelInFlight`, `raceInFlight`) and disable only the relevant buttons. Closing
+the window interrupts pending waits and abandons any booking that has not
+finished.
+
+## 25. Timer-driven refresh instead of model listeners
+
+**Decision:** a 700 ms `javax.swing.Timer` refreshes seat colours and the
+waitlist, while booking/cancel completions trigger an immediate full refresh.
+
+**Why:**
+
+- The model has no listener or observer API. Adding one would touch every
+  synchronized method and complicate the teaching example.
+- Waitlist changes happen on background threads. A timer is a small, safe way
+  to display them without coupling the model to Swing.
+- The timer only reads snapshots and aggregate counts; it never mutates the
+  model.
+- Explicit refreshes after a booking or cancellation keep the bookings table and
+  selection accurate without rebuilding it every tick.
+
+**Trade-off:** updates can lag by up to 700 ms, and the timer performs a small
+amount of polling. A listener-based model would be more precise but would add
+complexity to the concurrency lesson.
+
+## 26. GUI sample data is separate from the CLI
+
+**Decision:** `ticketbooking.app.DemoData` builds the GUI's three shows. The CLI
+keeps its own setup inside `Main`.
+
+**Why:**
+
+- `Main.createMainShow()` is private and the CLI is intentionally readable from
+  top to bottom; the GUI should not depend on a private demo method.
+- The GUI needs three shows in one theatre so the teacher can switch between the
+  catalogue, the waitlist seat, and the race seat.
+- Keeping `Main` unchanged means the CLI output and the documented line
+  references stay stable.
+
+**Trade-off:** the main-show seat setup is duplicated in `Main` and `DemoData`.
+That is six lines and is acceptable for a teaching project. A future refactor
+could extract a shared catalogue factory and update the CLI.
+
+## 27. The race button lives in the GUI too
+
+**Decision:** the **Race: 6 Customers** button runs six background booking
+tasks against one seat, using the same 2,500 ms timeout as the CLI demo.
+
+**Why:**
+
+- It makes the CLI's last-seat race demonstrable without switching to a
+  terminal.
+- It exercises the real `BookingService` and `Show` synchronization, not a
+  simulation.
+- The dialog shows each customer's outcome and the confirmed-booking count,
+  which makes "exactly one winner" easy to verify.
+
+**Trade-off:** the race needs an available seat. After the winner books it, the
+button reports that there is no available seat until that booking is cancelled.
+The dialog also appears only after the five waiters time out, about 2.5 seconds
+after the race starts.
 
 ## Known limitations / possible improvements
 
@@ -433,13 +546,20 @@ for this run, not a persistent source of truth.
 | Receipts from earlier runs are not cleaned | Clear `receipts/` in the launcher or use a run id |
 | No automated tests | Add JUnit tests for pricing, timeout, cancellation, and CSV escaping |
 | Show time is not enforced | Reject bookings after the show has started |
+| GUI refreshes by polling every 700 ms | Add a listener/observer API to the model |
+| Closing the GUI abandons pending waits | Track pending tasks and cancel them explicitly |
+| GUI starts from in-memory demo data | Add a CSV loader that rebuilds the theatre on startup |
+| Race demo needs an available seat | Add a reset action that frees or recreates the demo show |
+| No automated UI tests | Add AssertJ Swing or a small manual test checklist |
 
 ## Summary
 
 The design deliberately chooses **clarity over scalability**. One monitor per
 show, one wait/notify waitlist, and a full-snapshot CSV make the code easy to
 explain and easy to verify, while still being correct for the scenarios the
-project demonstrates. The main correctness rules are:
+project demonstrates. The GUI is an additional client, not a second
+implementation of the rules: it calls the same `BookingService` as the CLI. The
+main correctness rules are:
 
 1. The availability check and the seat claim are in the same synchronized
    method.
@@ -447,3 +567,5 @@ project demonstrates. The main correctness rules are:
 3. `notifyAll()` is called after the seat is actually released, while holding
    the same monitor the waiters used.
 4. The lock order is always `Show → Seat`, never the reverse.
+5. The Swing event-dispatch thread never calls a blocking booking or
+   cancellation method; those calls run on a background executor.

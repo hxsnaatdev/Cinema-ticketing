@@ -7,24 +7,32 @@ is in [`demo.md`](demo.md).
 
 ## 1. Big picture
 
-The code is split into three layers:
+The code is split into these packages:
 
 | Layer | Package | Responsibility |
 | --- | --- | --- |
-| Presentation / demo | `ticketbooking` | `Main` builds the objects and runs two demonstrations |
+| CLI presentation | `ticketbooking` | `Main` builds the objects and runs two demonstrations |
+| GUI presentation | `ticketbooking.ui` | Swing window, seat map, tables, background tasks |
+| GUI data | `ticketbooking.app` | `DemoData` builds the sample theatre for the GUI |
 | Domain model | `ticketbooking.model` | `Theatre`, `Show`, `Seat`, `Customer`, `Booking` and the booking rules |
 | Services | `ticketbooking.service` | `BookingService` facade, CSV persistence, receipt writing |
 | Exception | `ticketbooking.exception` | `SeatAlreadyBookedException` |
 
 ```text
-Main
+CLI: Main
  ├── creates Theatre, Show, Seats
  ├── creates BookingService (creates data/ and receipts/)
  ├── Demo 1: 6 Customer threads race for one seat
  ├── Demo 2: Bob waits for Alice's seat, then cancellation wakes him
  └── prints generated files
 
-Customer (Runnable)
+GUI: GuiMain
+ └── DemoData.createTheatre -> BookingFrame -> BookingService
+      ├── seat map / forms / tables
+      ├── background executor -> BookingService.book/cancel
+      └── 700 ms timer -> snapshot getters
+
+Customer / GUI worker
  └── BookingService.book(...)
       └── Show.bookSeat(...)          <-- critical section
            ├── Seat.book(...)         <-- marks the seat taken
@@ -314,7 +322,7 @@ threads can enter `bookSeat()` and wait as well.
 The checked exception is used for the expected business failure ("seat taken
 and you timed out"); `IllegalArgumentException` is reserved for caller bugs.
 
-## 11. End state after a clean run
+## 11. End state after a clean CLI run
 
 Assuming `data/` and `receipts/` are empty before the run:
 
@@ -335,7 +343,118 @@ receipts/
 contents and prints Bob's receipt. If old receipt files exist, they are listed
 too, because the program does not delete `receipts/` on startup.
 
-## 12. Full end-to-end call graph
+## 12. GUI flow
+
+The GUI is a second client, not a second model. It uses
+`ticketbooking.app.DemoData` for the sample theatre and
+`ticketbooking.ui.BookingFrame` for the window. All booking rules stay in
+`BookingService` / `Show`.
+
+### Startup
+
+```text
+GuiMain.main
+ ├── set system look and feel
+ └── SwingUtilities.invokeLater(...)
+      ├── DemoData.createTheatre()        -> SHOW-1, SHOW-WAIT, SHOW-RACE
+      └── new BookingFrame(theatre)
+           ├── new BookingService(theatre) -> creates data/ and receipts/
+           ├── build header / seat map / form / tables / status bar
+           ├── seatMap.setShow(first show)
+           ├── start 700 ms Swing timer
+           └── setVisible(true)
+```
+
+`DemoData` is separate from `Main` so the CLI can stay self-contained; it builds
+the same three shows the CLI demos use.
+
+### Booking from the GUI
+
+```text
+Book button
+ └── BookingFrame.bookSelectedSeat()
+      ├── validate name/email
+      ├── create Customer with a generated id
+      ├── set manualBookingInFlight = true
+      └── runAsync(() -> service.book(showId, seatId, customer, waitMs))
+           └── background executor thread
+                └── BookingService.book(...) -> Show.bookSeat(...)
+                     ├── success -> Booking
+                     └── timeout -> SeatAlreadyBookedException
+           └── SwingUtilities.invokeLater(...)
+                ├── manualBookingInFlight = false
+                ├── refreshAll()             -> snapshots + table/seat refresh
+                ├── selectBookingById(...)
+                └── status bar / warning dialog
+```
+
+The EDT never enters `bookSeat()`, so a waiting customer cannot freeze the
+window.
+
+### Waiting and cancellation from the GUI
+
+```text
+Bob sets Wait (seconds) = 5 and books an occupied seat
+ └── background worker blocks inside Show.bookSeat()
+      ├── waitlist.add(Bob)
+      └── wait(remaining)
+
+Alice selects her confirmed booking and presses Cancel
+ └── runAsync(() -> service.cancel(Alice's booking))
+      └── Show.cancelBooking()
+           ├── booking.cancel()
+           ├── seat.release()
+           └── notifyAll()
+
+Bob's worker wakes, re-checks the seat, books it, writes CSV + receipt
+ └── SwingUtilities.invokeLater(...) -> refreshAll() -> Bob's row appears
+```
+
+The 700 ms timer updates the **Waitlist** tab and seat colours by calling
+`getWaitlistSnapshot()`, `getSeatsSnapshot()`, and `getAvailableSeatCount()`.
+It only reads snapshots; it does not drive the booking logic.
+
+### Race button
+
+```text
+Race: 6 Customers
+ └── runAsync(() -> runRace(show, target))
+      ├── create a fixed pool of 6 daemon threads
+      ├── create CountDownLatch(1)
+      ├── submit 6 Callables, each waits on the latch
+      ├── latch.countDown()                  -- all start together
+      ├── each Callable -> service.book(..., 2500)
+      │    ├── one winner books the seat
+      │    └── five waiters time out
+      ├── collect Future results into a summary
+      └── return summary
+ └── SwingUtilities.invokeLater(...)
+      ├── refreshAll()
+      └── show summary dialog
+```
+
+This is the GUI equivalent of `Main.demonstrateLastSeatRace()`. It uses the real
+`BookingService`, so the same `Show` monitor and waitlist are exercised.
+
+### Receipts and shutdown
+
+- `ReceiptViewer.show()` reads `receipts/<id>.txt` or
+  `receipts/<id>-cancelled.txt` and displays it in a dialog.
+- Closing the window stops the timer, calls `executor.shutdownNow()` to
+  interrupt pending workers, disposes the frame, and exits the JVM.
+- The executor threads and the race pool threads are daemon threads, so a
+  pending wait cannot keep the JVM alive after the window closes.
+
+### GUI threading rules
+
+1. Only the EDT touches Swing components.
+2. `BookingService.book()` and `cancel()` always run on a background executor.
+3. Results return to the EDT through `SwingUtilities.invokeLater()`.
+4. The timer only reads model snapshots.
+5. In-flight flags disable only the affected buttons; cancellation remains
+   available while a customer waits.
+
+## 13. Full end-to-end call graph
 
 ```text
 Main.main
@@ -371,4 +490,33 @@ Main.main
       ├── print data/bookings.csv path
       ├── list receipts/
       └── read and print Bob's receipt
+
+GUI:
+GuiMain.main
+ └── SwingUtilities.invokeLater
+      ├── DemoData.createTheatre
+      └── new BookingFrame
+           ├── new BookingService -> data/ + receipts/
+           ├── build UI (show combo, seat map, form, tabs, status)
+           ├── start 700 ms refresh timer
+           └── onShowChanged -> seatMap.setShow + refreshAll
+
+Book button
+ └── runAsync -> background executor
+      └── BookingService.book -> Show.bookSeat
+      └── invokeLater -> refreshAll -> select row -> status
+
+Cancel button
+ └── runAsync -> BookingService.cancel -> Show.cancelBooking
+      └── invokeLater -> refreshAll -> cancellation receipt
+
+Race button
+ └── runAsync -> runRace
+      ├── 6 daemon tasks + CountDownLatch
+      ├── service.book × 6
+      └── invokeLater -> refreshAll -> result dialog
+
+Timer (700 ms)
+ └── getWaitlistSnapshot + getSeatsSnapshot + getAvailableSeatCount
+      └── update waitlist table and seat colours
 ```

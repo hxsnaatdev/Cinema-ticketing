@@ -368,7 +368,7 @@ still need separate coordination.
 
 **Q: Can two threads book the same seat?**
 A: No. Both the availability check and the claim happen inside
-`synchronized bookSeat()`. The losing threads see `seat.isBooked() == true` and
+`snchronized bookSeat()`. The losing threads see `seat.isBooked() == true` and
 either wait or time out. Demo 1 prints a confirmed count of exactly one.
 
 **Q: Why `while (seat.isBooked())` instead of `if`?**
