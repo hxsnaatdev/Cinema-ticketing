@@ -9,9 +9,17 @@ communication with `wait()` / `notifyAll()`.
 
 Requirements: JDK 17 or newer.
 
+Linux, macOS, or Windows with Git Bash / WSL:
+
 ```bash
 chmod +x run.sh
 ./run.sh
+```
+
+Windows (Command Prompt or PowerShell):
+
+```bat
+run.bat
 ```
 
 Or compile manually:
@@ -65,23 +73,6 @@ src/ticketbooking/
 4. **Files** - every successful booking updates `data/bookings.csv` and writes
    a receipt. Cancellation writes a cancellation receipt.
 
-## Course concept mapping
-
-| Handout topic | Where it appears |
-| --- | --- |
-| Classes and objects | `Theatre`, `Show`, `Seat`, `Customer`, `Booking` |
-| Constructors and encapsulation | Model constructors, private fields, getters |
-| Access control | Private state, package-private `Seat.book()` / `Seat.release()` |
-| Inheritance | `Seat` -> `RegularSeat`, `PremiumSeat`, `RecliningSeat` |
-| Method overriding / polymorphism | `getSeatType()` and `calculatePrice()` in seat subclasses |
-| Abstract classes | `Seat` is abstract |
-| Exception handling | `try/catch`, `throws`, custom checked `SeatAlreadyBookedException` |
-| File handling | `FileStorage` (CSV), `ReceiptGenerator` (text receipts) |
-| Creating threads | `Customer implements Runnable`, `new Thread(customer, name)` |
-| Thread lifecycle | `start()`, `join()`, `interrupt()` |
-| Synchronization | `synchronized` methods in `Show`, `Seat`, `FileStorage` |
-| Inter-thread communication | `wait(remaining)` and `notifyAll()` in `Show` |
-| Suspending/stopping threads | Wait timeouts, interruption handling, `finally` waitlist cleanup |
 
 ## Design notes
 
