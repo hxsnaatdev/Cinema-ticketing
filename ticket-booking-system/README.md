@@ -47,7 +47,7 @@ The program creates:
 
 ## Using the GUI
 
-1. Choose a show from the drop-down.
+1. Choose a show from the drop-down, or press **Add Movie** to create one.
 2. Click a seat. Green is available, pink is booked, blue is selected.
 3. Enter a customer name and email.
 4. Set **Wait (seconds)**:
@@ -58,6 +58,11 @@ The program creates:
 6. Select a row in the **Bookings** tab to cancel it or view its receipt.
 7. Use **Race: 6 Customers** to release six booking tasks at once against the
    selected (or first available) seat.
+
+**Add Movie** asks for a title, hall, time, row count, seats per row, seat
+layout and base price. It creates a new show id automatically, builds the seat
+grid, and selects the new show so it can be booked immediately. The show exists
+for the current session only; it is not reloaded on the next launch.
 
 The **Waitlist** tab shows the customers currently waiting. A 700 ms Swing timer
 refreshes the waitlist and seat colours without rebuilding the seat map.
@@ -122,8 +127,9 @@ src/ticketbooking/
 4. **Files** - every successful booking updates `data/bookings.csv` and writes
    a receipt. Cancellation writes a cancellation receipt.
 5. **GUI** - the same operations are available interactively. The race button
-   reproduces the six-customer contention, and the waitlist can be reproduced
-   by booking a seat, waiting for it as another customer, then cancelling.
+   reproduces the six-customer contention, the waitlist can be reproduced by
+   booking a seat, waiting for it as another customer, then cancelling, and
+   **Add Movie** creates a new show and seat layout without restarting.
 
 ## Design notes
 
@@ -143,6 +149,10 @@ src/ticketbooking/
   `getBookingsSnapshot()`, `getWaitlistSnapshot()`) and asks seats for their
   synchronized state, so it never exposes or mutates the model's internal
   collections.
+- Adding a movie happens on the EDT because it only builds a new in-memory
+  `Show` and calls the synchronized `Theatre.addShow()`. It is disabled while
+  a booking, cancellation or race is in flight so the selected show cannot
+  change under an active callback.
 
 ## Documentation
 

@@ -21,6 +21,7 @@ Files referenced:
 - [ ] Terminal font is large enough for the back of the room
 - [ ] Old output is removed so the file list is clean
 - [ ] A dry run has already succeeded
+- [ ] GUI dry run: `./run.sh gui`, then open **Add Movie** once
 - [ ] This guide, `flow.md`, and `decision.md` are open for reference
 
 ### Clean old output
@@ -78,7 +79,8 @@ Say:
 > exceptions, file handling, and thread synchronization. The program runs two
 > scripted demos. The first is six customers racing for the last seat. The
 > second is a customer waiting for a seat and being woken up when it is
-> cancelled.
+> cancelled. There is also a Swing GUI for interactive use, including a
+> runtime **Add Movie** action.
 
 Point at the package structure:
 
@@ -329,8 +331,10 @@ Skip the live code walkthrough; refer to `flow.md` and `decision.md`.
 | --- | --- | --- |
 | Clean output | `rm -rf data receipts out` | `rmdir /s /q data receipts out` |
 | Build + run | `./run.sh` | `run.bat` |
+| Run GUI | `./run.sh gui` | `run.bat gui` |
+| Run GUI (compiled) | `java -cp out ticketbooking.ui.GuiMain` | `java -cp out ticketbooking.ui.GuiMain` |
 | Compile only | `javac --release 17 -d out $(find src -name '*.java')` | `run.bat` (compiles then runs) |
-| Run compiled | `java -cp out ticketbooking.Main` | `java -cp out ticketbooking.Main` |
+| Run compiled CLI | `java -cp out ticketbooking.Main` | `java -cp out ticketbooking.Main` |
 | View CSV | `cat data/bookings.csv` | `type data\bookings.csv` |
 | List receipts | `ls receipts` | `dir receipts` |
 | View receipt | `cat receipts/BK-1003.txt` | `type receipts\BK-1003.txt` |
@@ -354,6 +358,7 @@ Skip the live code walkthrough; refer to `flow.md` and `decision.md`.
 | Synchronization | `Show.bookSeat()`, `Seat.book()`, `BookingService` |
 | Inter-thread communication | `wait()` / `notifyAll()` (`Show.java:75`, `:103`) |
 | Generics / collections | `Map<String, Seat>`, `List<Booking>`, `AtomicLong` |
+| GUI integration | `BookingFrame` calls `BookingService`; **Add Movie** builds a `Show` and seats |
 
 ---
 
@@ -434,15 +439,23 @@ A: Yes. It uses `Path` and `Files` with no hard-coded separators and UTF-8
 encoding. `run.sh` detects Git Bash/MSYS/Cygwin and uses `java.exe` /
 `javac.exe`; `run.bat` covers native Command Prompt and PowerShell.
 
-**Q: Why is there no GUI or user input?**
-A: The focus is OOP and concurrency. A fixed scenario is reproducible and
-easier to grade. The file outputs still demonstrate file handling.
+**Q: What can I do in the GUI?**
+A: The GUI provides the same booking operations plus a live seat map, booking
+and waitlist tabs, a receipt viewer, a six-customer race button, and **Add
+Movie**. It calls the same `BookingService` as the CLI, so it is a second
+client rather than a second implementation of the rules.
+
+**Q: Does Add Movie persist?**
+A: No. It creates a `Show` and its seats in memory for the current GUI session
+and registers the show in the `Theatre`. The new show is not written to CSV or
+reloaded on the next launch.
 
 ---
 
 ## 7. Optional live changes (only if the teacher asks)
 
-Make one change, recompile, and show the effect. Restore the file afterwards.
+Make one code change, recompile, and show the effect. Restore the file
+afterwards. The GUI add-movie step is runtime-only.
 
 1. **Shorter race timeout** — change `WAIT_TIMEOUT_MS` in `Main.java:24` from
    `2500` to `500`. The five losers fail sooner.
@@ -458,8 +471,14 @@ Make one change, recompile, and show the effect. Restore the file afterwards.
 4. **Add a new seat type** — create `CoupleSeat extends Seat` with a 2.5×
    multiplier and add one to the catalogue. No booking code changes are
    needed, which demonstrates the open/closed benefit of the abstraction.
+5. **Add a movie in the GUI** — run `./run.sh gui`, press **Add Movie**, enter
+   a title, and leave the default mixed 3×4 layout. Press **OK**. The show
+   selector switches to the new show, the seat map displays its 12 new seats,
+   and the status bar reports the generated show id. Book one seat to show the
+   same `BookingService` / `Show.bookSeat()` path used by the CLI. This is a
+   runtime-only change; restart the GUI to discard it.
 
-Recompile with `./run.sh` or `run.bat`.
+Recompile code changes with `./run.sh` or `run.bat`.
 
 ---
 

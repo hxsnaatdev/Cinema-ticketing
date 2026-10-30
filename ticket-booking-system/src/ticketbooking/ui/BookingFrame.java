@@ -4,6 +4,9 @@ import ticketbooking.exception.SeatAlreadyBookedException;
 import ticketbooking.model.Booking;
 import ticketbooking.model.BookingStatus;
 import ticketbooking.model.Customer;
+import ticketbooking.model.PremiumSeat;
+import ticketbooking.model.RecliningSeat;
+import ticketbooking.model.RegularSeat;
 import ticketbooking.model.Seat;
 import ticketbooking.model.Show;
 import ticketbooking.model.Theatre;
@@ -50,6 +53,11 @@ import java.awt.Toolkit;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -94,6 +102,7 @@ public class BookingFrame extends JFrame {
     private final JButton cancelButton = new JButton("Cancel Selected Booking");
     private final JButton receiptButton = new JButton("View Receipt");
     private final JButton raceButton = new JButton("Race: 6 Customers");
+    private final JButton addMovieButton = new JButton("Add Movie");
     private final JLabel selectionLabel = new JLabel(" ");
     private final JLabel availableLabel = new JLabel(" ");
     private final JLabel statusLabel = new JLabel("Ready.");
@@ -212,11 +221,13 @@ public class BookingFrame extends JFrame {
         cancelButton.addActionListener(event -> cancelSelectedBooking());
         receiptButton.addActionListener(event -> showSelectedReceipt());
         raceButton.addActionListener(event -> runRaceDemo());
+        addMovieButton.addActionListener(event -> addMovie());
 
         bookButton.setToolTipText("Book the selected seat for the customer in the form");
         cancelButton.setToolTipText("Cancel the booking selected in the table");
         receiptButton.setToolTipText("Show the generated receipt file");
         raceButton.setToolTipText("Start six customers at once against one seat");
+        addMovieButton.setToolTipText("Create a new show with a generated seat layout");
     }
 
     private JComponent buildHeader() {
@@ -233,6 +244,7 @@ public class BookingFrame extends JFrame {
         JButton refreshButton = new JButton("Refresh");
         refreshButton.addActionListener(event -> refreshAll());
         header.add(refreshButton);
+        header.add(addMovieButton);
 
         header.add(Box.createHorizontalStrut(12));
         availableLabel.setFont(availableLabel.getFont().deriveFont(Font.BOLD));
@@ -427,6 +439,138 @@ public class BookingFrame extends JFrame {
                 && booking.getStatus() == BookingStatus.CONFIRMED
                 && !cancelInFlight);
         receiptButton.setEnabled(booking != null);
+        addMovieButton.setEnabled(!manualBookingInFlight && !cancelInFlight && !raceInFlight);
+    }
+
+    private void addMovie() {
+        if (manualBookingInFlight || cancelInFlight || raceInFlight) {
+            setStatus("Wait for the current operation to finish before adding a movie.");
+            return;
+        }
+
+        String suggestedTime = LocalTime.now().plusHours(2).withSecond(0).withNano(0)
+                .format(DateTimeFormatter.ofPattern("HH:mm"));
+        JTextField titleField = new JTextField(20);
+        JTextField hallField = new JTextField("Screen " + (theatre.getShowsSnapshot().size() + 1), 10);
+        JTextField timeField = new JTextField(suggestedTime, 8);
+        JSpinner rowSpinner = new JSpinner(new SpinnerNumberModel(3, 1, 6, 1));
+        JSpinner seatSpinner = new JSpinner(new SpinnerNumberModel(4, 1, 10, 1));
+        JComboBox<String> layoutCombo = new JComboBox<>(new String[]{
+            "Mixed rows (Regular / Premium / Reclining)",
+            "All Regular", "All Premium", "All Reclining"});
+        JSpinner priceSpinner = new JSpinner(new SpinnerNumberModel(200, 50, 1000, 50));
+
+        JPanel form = new JPanel(new GridLayout(0, 2, 8, 6));
+        form.add(new JLabel("Movie title:"));
+        form.add(titleField);
+        form.add(new JLabel("Hall:"));
+        form.add(hallField);
+        form.add(new JLabel("Show time (HH:mm):"));
+        form.add(timeField);
+        form.add(new JLabel("Rows:"));
+        form.add(rowSpinner);
+        form.add(new JLabel("Seats per row:"));
+        form.add(seatSpinner);
+        form.add(new JLabel("Seat layout:"));
+        form.add(layoutCombo);
+        form.add(new JLabel("Base price (Rs.):"));
+        form.add(priceSpinner);
+        form.add(new JLabel("Show ID:"));
+        form.add(new JLabel(nextShowId() + " (automatic)"));
+
+        while (true) {
+            int choice = JOptionPane.showConfirmDialog(this, form, "Add Movie",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (choice != JOptionPane.OK_OPTION) {
+                setStatus("Add movie cancelled.");
+                return;
+            }
+
+            String title = titleField.getText().trim();
+            if (title.isEmpty()) {
+                showValidation("Enter a movie title.");
+                titleField.requestFocusInWindow();
+                continue;
+            }
+
+            String hall = hallField.getText().trim();
+            if (hall.isEmpty()) {
+                showValidation("Enter a hall name.");
+                hallField.requestFocusInWindow();
+                continue;
+            }
+
+            LocalTime parsedTime;
+            try {
+                parsedTime = LocalTime.parse(timeField.getText().trim(),
+                        DateTimeFormatter.ofPattern("H:mm"));
+            } catch (DateTimeParseException error) {
+                showValidation("Enter a valid time in HH:mm format, for example 18:30.");
+                timeField.requestFocusInWindow();
+                continue;
+            }
+
+            LocalDateTime showTime = LocalDateTime.of(LocalDate.now(), parsedTime);
+            if (showTime.isBefore(LocalDateTime.now())) {
+                showTime = showTime.plusDays(1);
+            }
+
+            int rows = ((Number) rowSpinner.getValue()).intValue();
+            int seatsPerRow = ((Number) seatSpinner.getValue()).intValue();
+            double basePrice = ((Number) priceSpinner.getValue()).doubleValue();
+            int layout = layoutCombo.getSelectedIndex();
+            String showId = nextShowId();
+            Show show = new Show(showId, title, hall, showTime);
+
+            for (int row = 0; row < rows; row++) {
+                String rowName = String.valueOf((char) ('A' + row));
+                for (int number = 1; number <= seatsPerRow; number++) {
+                    show.addSeat(createSeat(rowName, number, basePrice, layout));
+                }
+            }
+
+            try {
+                theatre.addShow(show);
+            } catch (IllegalArgumentException error) {
+                showError("Could not add movie", error);
+                return;
+            }
+
+            showCombo.addItem(show);
+            showCombo.setSelectedItem(show);
+            setStatus("Added \"" + title + "\" (" + showId + ") with "
+                    + (rows * seatsPerRow) + " seats in " + hall + ".");
+            return;
+        }
+    }
+
+    private Seat createSeat(String row, int number, double basePrice, int layout) {
+        int type = layout;
+        if (layout == 0) {
+            type = 1 + (row.charAt(0) - 'A') % 3;
+        }
+        switch (type) {
+            case 2:
+                return new PremiumSeat(row, number, basePrice);
+            case 3:
+                return new RecliningSeat(row, number, basePrice);
+            default:
+                return new RegularSeat(row, number, basePrice);
+        }
+    }
+
+    private String nextShowId() {
+        int highest = 0;
+        for (Show show : theatre.getShowsSnapshot()) {
+            String id = show.getShowId();
+            if (id.startsWith("SHOW-")) {
+                try {
+                    highest = Math.max(highest, Integer.parseInt(id.substring(5)));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return "SHOW-" + (highest + 1);
     }
 
     private void bookSelectedSeat() {
